@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>My Wallet</title>
+<style>
+:root{--bg:#0b0f1a;--card:#141a2b;--tx:#f2f4fa;--mut:#8b94ad;--ac:#7c5cff;--ac2:#22d3a6;--bd:#242c44;--rd:#ff6b6b;--am:#ffc14d}
+@media (prefers-color-scheme:light){:root{--bg:#f1f3fa;--card:#fff;--tx:#161b2e;--mut:#6b7390;--bd:#e3e7f3;--rd:#d63b3b;--am:#b7791f}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+main{max-width:520px;margin:0 auto;padding:16px;overflow-x:hidden}
+.hero{background:linear-gradient(135deg,#7c5cff,#22d3a6);color:#fff;border-radius:22px;padding:22px;margin-bottom:16px}
+.hero .l{opacity:.85;font-size:13px}.bal{font-size:40px;font-weight:800;margin:4px 0 14px}
+.addr{background:rgba(255,255,255,.18);border-radius:12px;padding:10px 12px;font:13px ui-monospace,Menlo,monospace;word-break:break-all;display:flex;gap:10px;align-items:center;justify-content:space-between}
+.addr button{width:auto;padding:6px 10px;font-size:12px;background:#fff;color:#4b36c9}
+.acts{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}
+.acts button{background:var(--card);color:var(--tx);border:1px solid var(--bd);display:flex;flex-direction:column;gap:4px;align-items:center;padding:14px 4px;font-size:13px}.acts span{font-size:22px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:18px;padding:16px;margin-bottom:14px}
+h2{font-size:16px;margin:0 0 12px}.mut{color:var(--mut);font-size:13px}
+input,select{width:100%;padding:13px;border:1px solid var(--bd);border-radius:12px;background:var(--bg);color:var(--tx);font-size:16px;margin-bottom:10px}
+button{padding:13px 16px;border:0;border-radius:12px;background:var(--ac);color:#fff;font-size:15px;font-weight:700;width:100%}
+button.g{background:var(--ac2);color:#06231b}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}.chip{width:auto;padding:9px 14px;background:var(--bg);color:var(--tx);border:1px solid var(--bd);font-size:14px}.chip.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:11px 0;border-top:1px solid var(--bd)}.row>div{min-width:0;word-break:break-word}
+.tag{font-size:12px;padding:2px 9px;border-radius:99px;border:1px solid currentColor}.pending{color:var(--am)}.approved{color:var(--ac2)}.rejected{color:var(--rd)}
+.note{background:var(--bg);border:1px dashed var(--bd);border-radius:12px;padding:10px;font-size:14px;margin-bottom:10px}
+#msg{color:var(--rd);font-size:14px;min-height:18px;margin-top:8px}.back,.lnk{background:none;color:var(--mut);width:auto;padding:0 0 10px;font-weight:500}
+</style></head><body><main id="app"><div class="card">Loading…</div></main>
+<script>
+if(!/^https?:/.test(location.protocol))document.getElementById('app').innerHTML='<div class="card"><b>Ye file seedha phone se nahi chalti.</b><br><br>Isay https hosting (GitHub Pages / Netlify) par upload karke us link se kholein.</div>';
+</script>
+<script type="module">
+import{initializeApp}from"https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import{getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,signOut}from"https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import{getFirestore,doc,setDoc,addDoc,collection,query,where,onSnapshot}from"https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+// ====== YAHAN APNA FIREBASE CONFIG PASTE KAREIN ======
+const firebaseConfig={apiKey:"PASTE",authDomain:"PASTE",projectId:"PASTE",appId:"PASTE"};
+if(firebaseConfig.projectId==="PASTE"){document.getElementById("app").innerHTML='<div class="card"><b>Firebase config paste nahi kiya.</b><br><br>File ke upar <code>PASTE</code> ki jagah apni Firebase values daalein.</div>';throw new Error("config")}
+const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
+const $=s=>document.querySelector(s);
+const esc=t=>{const d=document.createElement('div');d.textContent=t??'';return d.innerHTML};
+const money=n=>'Rs '+Number(n||0).toLocaleString();
+const fmt=t=>new Date(t).toLocaleString([],{dateStyle:'medium',timeStyle:'short'});
+const METHODS=['Money Pay','JazzCash','Easypaisa','Bank'];
+const B58='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const genAddr=()=>'MW'+Array.from(crypto.getRandomValues(new Uint8Array(28)),b=>B58[b%58]).join('');
+let me=null,P=null,bal=0,dep=[],wd=[],tr=[],led=[],pay='',v='home',method='Money Pay',msg='',mode='login',unsubs=[],busy=false,pend=false;
+const sortd=a=>a.sort((x,y)=>y.ts-x.ts);
+const held=()=>wd.concat(tr).filter(w=>w.status==='pending').reduce((s,w)=>s+w.amount,0);
+const chips=()=>`<div class="chips">${METHODS.map(m=>`<button class="chip ${m===method?'on':''}" onclick="setM('${m}')">${m}</button>`).join('')}</div>`;
+const tx=(l,s)=>`<div class="row"><div>${l}</div>${s}</div>`;
+const back=`<button class="back" onclick="go('home')">← Back</button>`;
+function render(){
+  const keep=['amt','acc','ref','to','nm','em','pw'].map(i=>[i,$('#'+i)?.value]);
+  let h='';
+  if(!me){
+    h=`<div class="card"><h2>${mode==='login'?'Login':'Naya Account'}</h2>${mode==='signup'?'<input id="nm" placeholder="Aapka naam">':''}<input id="em" type="email" placeholder="Email" autocapitalize="off"><input id="pw" type="password" placeholder="Password (6+ characters)"><button onclick="auth_()">${mode==='login'?'Login':'Account Banayein'}</button><div id="msg">${esc(msg)}</div><button class="lnk" style="margin-top:10px" onclick="mode='${mode==='login'?'signup':'login'}';msg='';render()">${mode==='login'?'Naya account banayein':'Pehle se account hai? Login'}</button></div>`;
+  }else if(!P){h='<div class="card">Loading…</div>'}
+  else if(v==='home'){
+    const reqs=sortd([...wd.map(r=>({...r,k:'Withdraw'})),...dep.map(r=>({...r,k:'Buy'})),...tr.map(r=>({...r,k:'Send',method:'To '+r.toAddr.slice(0,8)+'…'}))]);
+    const L={credit:'Added',withdraw:'Withdrawn',send:'Sent to ',receive:'Received from '};
+    h=`<div class="hero"><div class="l">Salam, ${esc(P.name)} · Total Balance</div><div class="bal">${money(bal)}</div>${held()?`<div class="l" style="margin:-8px 0 12px">Pending: ${money(held())}</div>`:''}<div class="l" style="margin-bottom:6px">Wallet ID</div><div class="addr"><span>${esc(P.addr)}</span><button onclick="copyA()">Copy</button></div></div>
+    <div class="acts"><button onclick="go('buy')"><span>＋</span>Buy</button><button onclick="go('send')"><span>➤</span>Send</button><button onclick="go('wd')"><span>↗</span>Withdraw</button><button onclick="go('recv')"><span>↙</span>Receive</button></div>
+    <div class="card"><h2>Meri Requests</h2>${reqs.map(r=>tx(`${r.k} · ${money(r.amount)}<div class="mut">${esc(r.method||'')} · ${fmt(r.ts)}</div>`,`<span class="tag ${r.status}">${r.status}</span>`)).join('')||'<div class="mut">Abhi koi request nahi</div>'}</div>
+    <div class="card"><h2>Transaction History</h2>${sortd([...led]).map(l=>{const p=['credit','receive'].includes(l.type);return tx(`${L[l.type]}${l.peer?esc(l.peer):''}<div class="mut">${fmt(l.ts)}</div>`,`<b style="color:var(${p?'--ac2':'--rd'})">${p?'+':'−'}${money(l.amount)}</b>`)}).join('')||'<div class="mut">Koi transaction nahi</div>'}</div>
+    <button class="lnk" onclick="out()">Logout</button>`;
+  }else if(v==='buy'){
+    h=`${back}<div class="card"><h2>Buy Balance</h2>${chips()}${pay?`<div class="note"><b>Payment yahan bhejein:</b><br>${esc(pay)}</div>`:''}<input id="amt" type="number" inputmode="numeric" placeholder="Amount (Rs)"><input id="ref" placeholder="Transaction ID / Reference"><button class="g" onclick="buy()">Submit Payment</button><div class="mut" style="margin-top:8px">Admin confirm karega to balance add ho jayega.</div><div id="msg">${esc(msg)}</div></div>`;
+  }else if(v==='wd'){
+    h=`${back}<div class="card"><h2>Withdraw</h2><div class="mut" style="margin-bottom:10px">Available: ${money(bal-held())}</div>${chips()}<input id="amt" type="number" inputmode="numeric" placeholder="Amount (Rs)"><input id="acc" placeholder="${method} account number"><button onclick="withdraw()">Withdraw Request</button><div id="msg">${esc(msg)}</div></div>`;
+  }else if(v==='send'){
+    h=`${back}<div class="card"><h2>Send Money</h2><div class="mut" style="margin-bottom:10px">Available: ${money(bal-held())}</div><input id="to" placeholder="Receiver Wallet ID" autocapitalize="off" autocomplete="off"><input id="amt" type="number" inputmode="numeric" placeholder="Amount (Rs)"><button class="g" onclick="send()">Send</button><div class="mut" style="margin-top:8px">Admin approve karega to paisa receiver ko mil jayega.</div><div id="msg">${esc(msg)}</div></div>`;
+  }else{
+    h=`${back}<div class="card"><h2>Receive</h2><div class="mut" style="margin-bottom:8px">Apni Wallet ID share karein:</div><div class="note" style="word-break:break-all;font-family:ui-monospace,Menlo,monospace">${esc(P.addr)}</div><button onclick="copyA()">Copy Wallet ID</button></div>`;
+  }
+  $('#app').innerHTML=h;keep.forEach(([i,x])=>{if(x&&$('#'+i))$('#'+i).value=x});
+}
+const soft=()=>{if(/INPUT|SELECT/.test(document.activeElement?.tagName||'')){pend=true;return}render()};
+document.addEventListener('focusout',()=>setTimeout(()=>{if(pend&&!/INPUT/.test(document.activeElement?.tagName||'')){pend=false;render()}},150));
+const once=async f=>{if(busy)return;busy=true;try{await f()}catch(e){msg='Error: '+e.message}finally{busy=false;render()}};
+const W=window;
+W.go=x=>{v=x;msg='';render()};W.setM=m=>{method=m;render()};
+W.copyA=()=>{try{navigator.clipboard.writeText(P.addr)}catch(e){}};
+W.out=()=>{unsubs.forEach(u=>u());unsubs=[];P=null;signOut(auth)};
+W.auth_=()=>once(async()=>{
+  const em=$('#em').value.trim(),pw=$('#pw').value,nm=$('#nm')?.value.trim();msg='';
+  if(mode==='signup'){
+    if(!nm)throw new Error('Naam likhein');
+    const c=await createUserWithEmailAndPassword(auth,em,pw);
+    await setDoc(doc(db,'users',c.user.uid),{name:nm,addr:genAddr(),email:em});
+  }else await signInWithEmailAndPassword(auth,em,pw);
+});
+W.buy=()=>once(async()=>{const a=Math.floor(+$('#amt').value),ref=$('#ref').value.trim();
+  if(!(a>0))return msg='Sahi amount likhein';if(!ref)return msg='Transaction ID likhein';
+  await addDoc(collection(db,'deposits'),{uid:me.uid,name:P.name,amount:a,method,ref,status:'pending',ts:Date.now()});v='home'});
+W.withdraw=()=>once(async()=>{const a=Math.floor(+$('#amt').value),acc=$('#acc').value.trim();
+  if(!(a>0))return msg='Sahi amount likhein';if(!acc)return msg='Account number likhein';if(a>bal-held())return msg='Balance kafi nahi hai';
+  await addDoc(collection(db,'withdrawals'),{uid:me.uid,name:P.name,amount:a,account:acc,method,status:'pending',ts:Date.now()});v='home'});
+W.send=()=>once(async()=>{const to=$('#to').value.trim(),a=Math.floor(+$('#amt').value);
+  if(to.length<20)return msg='Sahi Wallet ID likhein';if(to===P.addr)return msg='Apne aap ko send nahi kar sakte';
+  if(!(a>0))return msg='Sahi amount likhein';if(a>bal-held())return msg='Balance kafi nahi hai';
+  await addDoc(collection(db,'transfers'),{uid:me.uid,name:P.name,toAddr:to,amount:a,status:'pending',ts:Date.now()});v='home'});
+const own=c=>query(collection(db,c),where('uid','==',me.uid));
+onAuthStateChanged(auth,u=>{
+  me=u;unsubs.forEach(x=>x());unsubs=[];P=null;
+  if(u){
+    unsubs=[onSnapshot(doc(db,'users',u.uid),s=>{P=s.data()||null;soft()}),
+    onSnapshot(doc(db,'wallets',u.uid),s=>{bal=s.data()?.balance||0;soft()}),
+    onSnapshot(own('deposits'),s=>{dep=s.docs.map(d=>d.data());soft()}),
+    onSnapshot(own('withdrawals'),s=>{wd=s.docs.map(d=>d.data());soft()}),
+    onSnapshot(own('transfers'),s=>{tr=s.docs.map(d=>d.data());soft()}),
+    onSnapshot(own('ledger'),s=>{led=s.docs.map(d=>d.data());soft()}),
+    onSnapshot(doc(db,'settings','pay'),s=>{pay=s.data()?.text||'';soft()})];
+  }
+  render();
+});
+</script></body></html>
